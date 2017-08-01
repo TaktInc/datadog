@@ -25,7 +25,8 @@ library
                        Network.Datadog.Monitor,
                        Network.Datadog.Types
                        Network.Datadog.Internal,
-                       Network.StatsD.Datadog
+                       Network.StatsD.Datadog,
+                       Network.Datadog.Metrics
                        -- Datadog.Metrics,
                        -- Datadog,
                        -- Datadog.Wai
@@ -47,7 +48,7 @@ library
                        lifted-base,
                        transformers-base,
                        unordered-containers >=0.2 && <0.3,
-                       vector >=0.10 && <0.12,
+                       vector >=0.10 && <0.13,
                        dlist
   hs-source-dirs:      src
   default-language:    Haskell2010
