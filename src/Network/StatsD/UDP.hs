@@ -9,7 +9,7 @@ module Network.StatsD.UDP
 where
 
 import Control.Concurrent (forkIO, threadDelay)
-import Control.Concurrent.MVar.Strict (MVar, newEmptyMVar, takeMVar, putMVar)
+import Control.Concurrent.MVar.Strict (MVar, newEmptyMVar, takeMVar, putMVar, tryTakeMVar)
 import Control.DeepSeq (NFData)
 import Control.Exception (SomeException, bracket, catch, finally)
 
@@ -40,8 +40,9 @@ udpSend :: UDPSink -> B.ByteString -> IO ()
 udpSend (UDPSink mailbox) bytes =
     putMVar mailbox $ Write bytes
 
+-- | Background agent moves data from inbox to socket.
 agent :: String -> Int -> MVar Message -> IO ()
-agent host port inbox = withRestarts $ do
+agent host port inbox = withRestarts inbox $ do
     bracket (initHandle host port) hClose $ \h -> do
         let loop = do msg <- takeMVar inbox
                       case msg of
@@ -49,11 +50,24 @@ agent host port inbox = withRestarts $ do
                           Close   -> pure ()
         loop
 
-withRestarts :: IO () -> IO ()
-withRestarts work =
+-- | Restarts the agent in case of exceptions. Flushes messages before
+-- waiting to retry agent connection loop.
+withRestarts :: MVar Message -> IO () -> IO ()
+withRestarts inbox work =
     catch work $ \ (_ :: SomeException) -> do
+    flush 0 inbox
     threadDelay 1000000 -- 1 sec
-    withRestarts work
+    withRestarts inbox work
+
+-- | Drops up to 128 incoming messages to free up writer threads.
+flush :: Int -> MVar Message -> IO ()
+flush 128 _   = pure ()
+flush i inbox = do
+    mm <- tryTakeMVar inbox
+    case mm of
+        Nothing        -> pure ()
+        Just Close     -> pure ()
+        Just (Write _) -> flush (i + 1) inbox
 
 initHandle :: String -> Int -> IO Handle
 initHandle host port = do
