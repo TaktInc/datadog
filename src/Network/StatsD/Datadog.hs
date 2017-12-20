@@ -50,28 +50,20 @@ module Network.StatsD.Datadog (
   StatsClient(Dummy)
 ) where
 import Control.Applicative ((<$>))
-import Control.Exception (bracket)
 import Control.Lens
 import Control.Monad.Base
 import Control.Monad.Trans.Control
-import Control.Reaper
 import Data.BufferBuilder.Utf8
 import Data.List (intersperse)
-import Data.Monoid
-import Data.Maybe (isNothing)
-import Data.Int
-import Data.Word
 import qualified Data.ByteString as B
 import qualified Data.Foldable as F
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Clock
 import Data.Time.Clock.POSIX
-import Data.Time.Format
 import Data.Text.Encoding (encodeUtf8)
-import Data.ByteString.Short hiding (empty)
+import Network.StatsD.UDP
 import Network.Socket hiding (send, sendTo, recv, recvFrom)
-import System.IO (hClose, hSetBuffering, BufferMode(LineBuffering), IOMode(WriteMode), Handle)
 
 epochTime :: UTCTime -> Int
 epochTime = round . utcTimeToPOSIXSeconds
@@ -334,8 +326,10 @@ instance ToStatsD ServiceCheck where
         sequence_ $ intersperse (appendChar7 ',') $ map fromTag ts
 
 data DogStatsSettings = DogStatsSettings
-  { dogStatsSettingsHost     :: HostName -- ^ The hostname or IP of the DogStatsD server (default: 127.0.0.1)
-  , dogStatsSettingsPort     :: Int      -- ^ The port that the DogStatsD server is listening on (default: 8125)
+  { dogStatsSettingsHost :: !HostName
+      -- ^ The hostname or IP of the DogStatsD server (default: 127.0.0.1)
+  , dogStatsSettingsPort :: !Int
+      -- ^ The port that the DogStatsD server is listening on (default: 8125)
   }
 
 makeFields ''DogStatsSettings
@@ -343,37 +337,17 @@ makeFields ''DogStatsSettings
 defaultSettings :: DogStatsSettings
 defaultSettings = DogStatsSettings "127.0.0.1" 8125
 
-withDogStatsD :: MonadBaseControl IO m => DogStatsSettings -> (StatsClient -> m a) -> m a
+withDogStatsD :: MonadBaseControl IO m
+              => DogStatsSettings
+              -> (StatsClient -> m a)
+              -> m a
 withDogStatsD s f = do
-     let setup = do
-           addrInfos <- getAddrInfo (Just $ defaultHints { addrFlags = [AI_PASSIVE] })
-                                    (Just $ s ^. host)
-                                    (Just $ show $ s ^. port)
-           case addrInfos of
-             [] -> error "No address for hostname" -- TODO throw
-             (serverAddr:_) -> do
-               sock <- socket (addrFamily serverAddr) Datagram defaultProtocol
-               connect sock (addrAddress serverAddr)
-               h <- socketToHandle sock WriteMode
-               hSetBuffering h LineBuffering
-               let builderAction work = do
-                     F.mapM_ (B.hPut h . runUtf8Builder) work
-                     return $ const Nothing
-                   reaperSettings = defaultReaperSettings { reaperAction = builderAction
-                                                          , reaperDelay = 1000000 -- one second
-                                                          , reaperCons = \item work -> Just $ maybe item (>> item) work
-                                                          , reaperNull = isNothing
-                                                          , reaperEmpty = Nothing
-                                                          }
-               r <- mkReaper reaperSettings
-               return $ StatsClient h r
-     liftBaseOp (bracket setup (\c -> finalizeStatsClient c >> hClose (statsClientHandle c))) f
+    let mainOp :: (StatsClient -> IO a) -> IO a
+        mainOp work = withUDPSink (s ^. host) (s ^. port) $ work . StatsClient
+    liftBaseOp mainOp f
 
 -- | Note that Dummy is not the only constructor, just the only publicly available one.
-data StatsClient = StatsClient
-                   { statsClientHandle :: !Handle
-                   , statsClientReaper :: Reaper (Maybe (Utf8Builder ())) (Utf8Builder ())
-                   }
+data StatsClient = StatsClient !UDPSink
                  | Dummy -- ^ Just drops all stats.
 
 -- | Send a 'Metric', 'Event', or 'StatusCheck' to the DogStatsD server.
@@ -386,10 +360,7 @@ data StatsClient = StatsClient
 -- >   send client $ metric "wombat.force_count" Gauge (9001 :: Int)
 -- >   send client $ serviceCheck "Wombat Radar" ServiceOk
 send :: (MonadBase IO m, ToStatsD v) => StatsClient -> v -> m ()
-send (StatsClient _ r) v = liftBase $ reaperAdd r (toStatsD v >> appendChar7 '\n')
+send (StatsClient sink) v =
+    liftBase . udpSend sink . runUtf8Builder $ toStatsD v >> appendChar7 '\n'
 send Dummy _ = return ()
 {-# INLINEABLE send #-}
-
-finalizeStatsClient :: StatsClient -> IO ()
-finalizeStatsClient (StatsClient h r) = reaperStop r >>= F.mapM_ (B.hPut h . runUtf8Builder)
-finalizeStatsClient Dummy = return ()

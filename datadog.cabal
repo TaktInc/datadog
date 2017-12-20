@@ -30,12 +30,14 @@ library
                        -- Datadog.Metrics,
                        -- Datadog,
                        -- Datadog.Wai
+  other-modules:       Network.StatsD.UDP
   other-extensions:    OverloadedStrings, GeneralizedNewtypeDeriving, TemplateHaskell, FunctionalDependencies, MultiParamTypeClasses, FlexibleInstances
   build-depends:       aeson >=0.8,
                        auto-update,
                        base >=4.7 && <5,
                        buffer-builder >=0.2 && <0.3,
                        bytestring,
+                       deepseq >= 1.4.2.0,
                        dlist,
                        http-client >=0.4,
                        http-client-tls >=0.2,
@@ -45,6 +47,7 @@ library
                        monad-control ==1.*,
                        network,
                        old-locale,
+                       strict-concurrency >= 0.2,
                        text,
                        time,
                        transformers-base,
@@ -67,6 +70,8 @@ test-suite datadog-api-test
   build-depends:       Cabal >=1.9.2,
                        base >=4.8 && <5,
                        datadog,
+                       deepseq >= 1.4.2.0,
+                       strict-concurrency >= 0.2,
                        lens,
                        network,
                        time >=1.5 && <1.7,
@@ -78,6 +83,7 @@ test-suite datadog-api-test
 executable datadog-leak
   build-depends:       base >=4.8 && <5,
                        datadog,
+                       deepseq >= 1.4.2.0,
                        unix >= 2.7.2.1
   hs-source-dirs:      leak
   main-is:             Main.hs
