@@ -27,9 +27,7 @@ withUDPSink :: String -> Int -> (UDPSink -> IO a) -> IO a
 withUDPSink host port main = do
     inbox <- newEmptyMVar
     withAsync (withRestarts inbox $ agent host port inbox) $ \_ -> do
-        r <- main (UDPSink inbox)
-        putStrLn "DONE"
-        pure $! r
+        main (UDPSink inbox)
 
 -- | Send a line of input over UDP.
 udpPutStrLn :: UDPSink -> B.ByteString -> IO ()
@@ -48,7 +46,7 @@ agent host port inbox = do
 withRestarts :: MVar a -> IO () -> IO ()
 withRestarts inbox work =
     catch work $ \(err :: IOException) -> do
-        hPutStrLn stderr $ show err
+        hPutStrLn stderr $ "datadog:UDP.hs: " `mappend` show err
         flushSleep inbox
         withRestarts inbox work
 
@@ -70,7 +68,7 @@ initHandle host port = do
     let hints = S.defaultHints { S.addrFlags = [S.AI_PASSIVE] }
     addrInfos <- S.getAddrInfo (Just hints) (Just host) (Just $ show port)
     case addrInfos of
-        [] -> error "No address for hostname" -- TODO throw
+        [] -> error "datadog:UDP.hs: No address for hostname" -- TODO throw
         (addr:_) -> do
             sock <- S.socket (S.addrFamily addr) S.Datagram S.defaultProtocol
             S.connect sock (S.addrAddress addr)
