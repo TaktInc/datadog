@@ -361,6 +361,6 @@ data StatsClient = StatsClient !UDPSink
 -- >   send client $ serviceCheck "Wombat Radar" ServiceOk
 send :: (MonadBase IO m, ToStatsD v) => StatsClient -> v -> m ()
 send (StatsClient sink) v =
-    liftBase . udpSend sink . runUtf8Builder $ toStatsD v >> appendChar7 '\n'
+    liftBase . udpPutStrLn sink . runUtf8Builder $ toStatsD v
 send Dummy _ = return ()
 {-# INLINEABLE send #-}

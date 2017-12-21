@@ -33,6 +33,7 @@ library
   other-modules:       Network.StatsD.UDP
   other-extensions:    OverloadedStrings, GeneralizedNewtypeDeriving, TemplateHaskell, FunctionalDependencies, MultiParamTypeClasses, FlexibleInstances
   build-depends:       aeson >=0.8,
+                       async >= 2.1.1.1,
                        auto-update,
                        base >=4.7 && <5,
                        buffer-builder >=0.2 && <0.3,
@@ -68,12 +69,13 @@ test-suite datadog-api-test
                        Test.Network.Datadog.Monitor,
                        Test.Network.Datadog.StatsD
   build-depends:       Cabal >=1.9.2,
+                       async >= 2.1.1.1,
                        base >=4.8 && <5,
                        datadog,
                        deepseq >= 1.4.2.0,
-                       strict-concurrency >= 0.2,
                        lens,
                        network,
+                       strict-concurrency >= 0.2,
                        time >=1.5 && <1.7,
                        unix >= 2.7.2.1
   hs-source-dirs:      test
@@ -81,7 +83,8 @@ test-suite datadog-api-test
   ghc-options:         -Wall -O3 -threaded -rtsopts -with-rtsopts=-N
 
 executable datadog-leak
-  build-depends:       base >=4.8 && <5,
+  build-depends:       async >= 2.1.1.1,
+                       base >=4.8 && <5,
                        datadog,
                        deepseq >= 1.4.2.0,
                        unix >= 2.7.2.1
