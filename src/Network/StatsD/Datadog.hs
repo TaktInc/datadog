@@ -6,6 +6,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module Network.StatsD.Datadog (
   -- * Client interface
   DogStatsSettings(..),
@@ -50,7 +51,7 @@ module Network.StatsD.Datadog (
   StatsClient(Dummy)
 ) where
 import Control.Applicative ((<$>))
-import Control.Exception (bracket)
+import Control.Exception (bracket, IOException, catch, onException)
 import Control.Lens
 import Control.Monad.Base
 import Control.Monad.Trans.Control
@@ -71,7 +72,7 @@ import Data.Time.Format
 import Data.Text.Encoding (encodeUtf8)
 import Data.ByteString.Short hiding (empty)
 import Network.Socket hiding (send, sendTo, recv, recvFrom)
-import System.IO (hClose, hSetBuffering, BufferMode(LineBuffering), IOMode(WriteMode), Handle)
+import System.IO (hClose, hSetBuffering, BufferMode(LineBuffering), IOMode(WriteMode), Handle, stderr, hPutStrLn)
 
 epochTime :: UTCTime -> Int
 epochTime = round . utcTimeToPOSIXSeconds
@@ -356,18 +357,31 @@ withDogStatsD s f = do
                connect sock (addrAddress serverAddr)
                h <- socketToHandle sock WriteMode
                hSetBuffering h LineBuffering
-               let builderAction work = do
-                     F.mapM_ (B.hPut h . runUtf8Builder) work
-                     return $ const Nothing
-                   reaperSettings = defaultReaperSettings { reaperAction = builderAction
-                                                          , reaperDelay = 1000000 -- one second
-                                                          , reaperCons = \item work -> Just $ maybe item (>> item) work
-                                                          , reaperNull = isNothing
-                                                          , reaperEmpty = Nothing
+               let reaperSettings = defaultReaperSettings { reaperAction = cleanBuffer h
+                                                          , reaperDelay  = 1000000 -- one second
+                                                          , reaperCons   = \item work -> Just $ maybe item (>> item) work
+                                                          , reaperNull   = isNothing
+                                                          , reaperEmpty  = Nothing
                                                           }
                r <- mkReaper reaperSettings
                return $ StatsClient h r
      liftBaseOp (bracket setup (\c -> finalizeStatsClient c >> hClose (statsClientHandle c))) f
+
+type Buffer = Maybe (Utf8Builder ())
+
+cleanBuffer :: Handle -> Buffer -> IO (Buffer -> Buffer)
+cleanBuffer h buf = flushBuffer h buf >> pure id
+
+flushBuffer :: Handle -> Buffer -> IO ()
+flushBuffer _ Nothing    = pure ()
+flushBuffer h (Just buf) = do
+    B.hPut h (runUtf8Builder buf) `catch` \(err :: IOException) -> do
+        -- If uncaught, IOException crashes the reaper thread,
+        -- starting a memory leak as the buffer grows without bound.
+        -- Example IOException condition: when statsd service goes
+        -- down. The exception can be just ignored but here we report
+        -- on stderr for visilibty.
+        hPutStrLn stderr $ "datadog:Datadog.hs: " `mappend` show err
 
 -- | Note that Dummy is not the only constructor, just the only publicly available one.
 data StatsClient = StatsClient
@@ -391,5 +405,5 @@ send Dummy _ = return ()
 {-# INLINEABLE send #-}
 
 finalizeStatsClient :: StatsClient -> IO ()
-finalizeStatsClient (StatsClient h r) = reaperStop r >>= F.mapM_ (B.hPut h . runUtf8Builder)
+finalizeStatsClient (StatsClient h r) = reaperStop r >>= flushBuffer h
 finalizeStatsClient Dummy = return ()
