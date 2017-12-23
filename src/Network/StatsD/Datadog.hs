@@ -357,7 +357,9 @@ withDogStatsD s f = do
                h <- socketToHandle sock WriteMode
                hSetBuffering h LineBuffering
                let builderAction work = do
+                     F.mapM_ (putStrLn . ("Cleaning N=" <>) . show . B.length . runUtf8Builder) work
                      F.mapM_ (B.hPut h . runUtf8Builder) work
+                     putStrLn "Cleaned"
                      return $ const Nothing
                    reaperSettings = defaultReaperSettings { reaperAction = builderAction
                                                           , reaperDelay = 1000000 -- one second
