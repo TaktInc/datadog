@@ -374,7 +374,10 @@ send Dummy _ = return ()
 {-# INLINEABLE send #-}
 
 write :: Handle -> Utf8Builder () -> IO ()
-write h b = (B.hPut h . runUtf8Builder $ b >> appendChar7 '\n') `catch` handle
+write h b = (B.hPut h . runUtf8Builder $ b >> appendChar7 '\n') `catch` ignoreIO
 
-handle :: IOException -> IO ()
-handle err = hPutStrLn stderr $ "datadog:Datadog.hs: " `mappend` show err
+-- | Ignoring IOException from UDP socket write operation. UDP is
+-- lossy anyway. Not trying to handle as metric write rate can be high
+-- and this function is called a lot.
+ignoreIO :: IOException -> IO ()
+ignoreIO = const $ pure ()
