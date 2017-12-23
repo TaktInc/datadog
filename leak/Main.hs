@@ -2,6 +2,8 @@
 
 module Main where
 
+import Control.Monad (forM_)
+import Control.Concurrent (threadDelay)
 import System.Posix.Unistd (usleep)
 import System.Environment (getArgs)
 import Network.StatsD.Datadog
@@ -16,6 +18,7 @@ main = do
 loop :: StatsClient -> Int -> Int -> IO ()
 loop c m i | i == m    = pure ()
            | otherwise = do
-    send c (metric (MetricName "i") Gauge m)
-    usleep 10000
+    forM_ [1..100] $ \_ ->
+        send c (metric (MetricName "i") Gauge m)
+    threadDelay 1000
     loop c m (i + 1)
