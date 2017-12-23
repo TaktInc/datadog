@@ -50,28 +50,21 @@ module Network.StatsD.Datadog (
   StatsClient(Dummy)
 ) where
 import Control.Applicative ((<$>))
-import Control.Exception (bracket)
+import Control.Exception (IOException, bracket, catch)
 import Control.Lens
 import Control.Monad.Base
 import Control.Monad.Trans.Control
-import Control.Reaper
 import Data.BufferBuilder.Utf8
 import Data.List (intersperse)
-import Data.Monoid
-import Data.Maybe (isNothing)
-import Data.Int
-import Data.Word
 import qualified Data.ByteString as B
 import qualified Data.Foldable as F
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Clock
 import Data.Time.Clock.POSIX
-import Data.Time.Format
 import Data.Text.Encoding (encodeUtf8)
-import Data.ByteString.Short hiding (empty)
 import Network.Socket hiding (send, sendTo, recv, recvFrom)
-import System.IO (hClose, hSetBuffering, BufferMode(LineBuffering), IOMode(WriteMode), Handle)
+import System.IO (hClose, hSetBuffering, BufferMode(LineBuffering), IOMode(WriteMode), Handle, hPutStrLn, stderr)
 
 epochTime :: UTCTime -> Int
 epochTime = round . utcTimeToPOSIXSeconds
@@ -356,23 +349,12 @@ withDogStatsD s f = do
                connect sock (addrAddress serverAddr)
                h <- socketToHandle sock WriteMode
                hSetBuffering h LineBuffering
-               let builderAction work = do
-                     F.mapM_ (B.hPut h . runUtf8Builder) work
-                     return $ const Nothing
-                   reaperSettings = defaultReaperSettings { reaperAction = builderAction
-                                                          , reaperDelay = 1000000 -- one second
-                                                          , reaperCons = \item work -> Just $ maybe item (>> item) work
-                                                          , reaperNull = isNothing
-                                                          , reaperEmpty = Nothing
-                                                          }
-               r <- mkReaper reaperSettings
-               return $ StatsClient h r
-     liftBaseOp (bracket setup (\c -> finalizeStatsClient c >> hClose (statsClientHandle c))) f
+               return $ StatsClient h
+     liftBaseOp (bracket setup (hClose . statsClientHandle)) f
 
 -- | Note that Dummy is not the only constructor, just the only publicly available one.
 data StatsClient = StatsClient
                    { statsClientHandle :: !Handle
-                   , statsClientReaper :: Reaper (Maybe (Utf8Builder ())) (Utf8Builder ())
                    }
                  | Dummy -- ^ Just drops all stats.
 
@@ -386,10 +368,13 @@ data StatsClient = StatsClient
 -- >   send client $ metric "wombat.force_count" Gauge (9001 :: Int)
 -- >   send client $ serviceCheck "Wombat Radar" ServiceOk
 send :: (MonadBase IO m, ToStatsD v) => StatsClient -> v -> m ()
-send (StatsClient _ r) v = liftBase $ reaperAdd r (toStatsD v >> appendChar7 '\n')
+send (StatsClient h) v = liftBase . write h $ toStatsD v
+
 send Dummy _ = return ()
 {-# INLINEABLE send #-}
 
-finalizeStatsClient :: StatsClient -> IO ()
-finalizeStatsClient (StatsClient h r) = reaperStop r >>= F.mapM_ (B.hPut h . runUtf8Builder)
-finalizeStatsClient Dummy = return ()
+write :: Handle -> Utf8Builder () -> IO ()
+write h b = (B.hPut h . runUtf8Builder $ b >> appendChar7 '\n') `catch` handle
+
+handle :: IOException -> IO ()
+handle err = hPutStrLn stderr $ "datadog:Datadog.hs: " `mappend` show err
